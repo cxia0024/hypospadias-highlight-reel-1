@@ -20,17 +20,18 @@ class CaptionedClip:
 
 class ClipCaptioner:
     def __init__(self, config: dict):
-        self.llm_name = config.get("llm_name", "gpt-4o-mini")
+        self.model_name = config.get("model_name", "claude-sonnet-4-20250514")
         self.prompt_template = config.get(
             "prompt_template",
             "Summarize these consecutive frame descriptions into one coherent surgical action.",
         )
+        self.max_tokens = config.get("max_tokens", 150)
         self.client = self._init_client()
 
     def _init_client(self):
         try:
-            import openai
-            return openai.OpenAI()
+            import anthropic
+            return anthropic.Anthropic()
         except (ImportError, Exception):
             return None
 
@@ -50,15 +51,15 @@ class ClipCaptioner:
             captions_text = f"Surgical phase: {phase.display_name}\n\n{captions_text}"
 
         if self.client is not None:
-            response = self.client.chat.completions.create(
-                model=self.llm_name,
+            response = self.client.messages.create(
+                model=self.model_name,
+                system=self.prompt_template,
                 messages=[
-                    {"role": "system", "content": self.prompt_template},
                     {"role": "user", "content": captions_text},
                 ],
-                max_tokens=150,
+                max_tokens=self.max_tokens,
             )
-            clip_caption = response.choices[0].message.content.strip()
+            clip_caption = response.content[0].text.strip()
         else:
             clip_caption = (
                 f"Clip {clip.start_sec:.0f}-{clip.end_sec:.0f}s{phase_context}: "

@@ -38,13 +38,13 @@ phase_recognition:
     - dressing
 
 phase2_frame_caption:
-  model: "blip2"
+  model_name: "claude-sonnet-4-20250514"
   prompt_template: "Describe the surgical scene showing {detected_objects}."
-  max_caption_length: 80
+  max_tokens: 80
 
 phase3_clip_caption:
-  model: "llm"
-  llm_name: "gpt-4o-mini"
+  model_name: "claude-sonnet-4-20250514"
+  max_tokens: 150
   context_window_frames: 10
   prompt_template: |
     Given these consecutive frame descriptions from a hypospadias repair video,
