@@ -1,5 +1,5 @@
 pipeline:
-  phases: [detection, frame_caption, clip_caption, synthesis]
+  phases: [detection, phase_recognition, frame_caption, clip_caption, synthesis]
   device: "cuda"  # or "cpu"
 
 video:
@@ -21,6 +21,21 @@ phase1_detection:
     - glans
     - skin_flap
     - dartos_flap
+
+phase_recognition:
+  model: "temporal_cnn"
+  weights: "models/hypospadias_phase_recognition.pt"
+  temporal_smoothing_window: 15
+  transition_penalty: 0.3
+  phases:
+    - preparation
+    - degloving
+    - urethral_plate_incision
+    - tubularization
+    - waterproofing
+    - glansplasty
+    - skin_closure
+    - dressing
 
 phase2_frame_caption:
   model: "blip2"
