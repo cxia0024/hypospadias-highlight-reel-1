@@ -1,0 +1,49 @@
+pipeline:
+  phases: [detection, frame_caption, clip_caption, synthesis]
+  device: "cuda"  # or "cpu"
+
+video:
+  sample_fps: 1.0          # frames per second to sample
+  clip_duration_sec: 10    # sliding window for clip grouping
+  clip_stride_sec: 5       # stride between clip windows
+
+phase1_detection:
+  model: "yolov8"
+  weights: "models/hypospadias_yolov8.pt"
+  confidence_threshold: 0.4
+  classes:
+    - scissors
+    - forceps
+    - needle_driver
+    - suture
+    - catheter
+    - urethral_plate
+    - glans
+    - skin_flap
+    - dartos_flap
+
+phase2_frame_caption:
+  model: "blip2"
+  prompt_template: "Describe the surgical scene showing {detected_objects}."
+  max_caption_length: 80
+
+phase3_clip_caption:
+  model: "llm"
+  llm_name: "gpt-4o-mini"
+  context_window_frames: 10
+  prompt_template: |
+    Given these consecutive frame descriptions from a hypospadias repair video,
+    write a single coherent sentence describing the surgical action in this clip.
+
+phase4_synthesis:
+  highlight_reel:
+    max_duration_sec: 120
+    selection_strategy: "importance_score"  # importance_score | uniform | phase_balanced
+    min_clip_score: 0.6
+  report:
+    format: "markdown"
+    sections:
+      - summary
+      - phase_timeline
+      - key_moments
+      - instrument_usage
