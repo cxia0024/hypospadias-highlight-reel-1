@@ -8,9 +8,16 @@ video:
   clip_stride_sec: 5       # stride between clip windows
 
 phase1_detection:
-  model: "yolov8"
-  weights: "models/hypospadias_yolov8.pt"
-  confidence_threshold: 0.4
+  model: "vit"
+  weights: "models/hypospadias_vit_detector.pt"
+  confidence_threshold: 0.5
+  image_size: 224
+  patch_size: 16
+  embed_dim: 768
+  num_heads: 12
+  num_layers: 12
+  mlp_dim: 3072
+  dropout: 0.1
   classes:
     - scissors
     - forceps
