@@ -6,7 +6,7 @@
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
     ┌─────────────────────────────────────────────────────────────────┐
-    │                    📹  INPUT: Raw Surgical Video                │
+    │                     INPUT: Raw Surgical Video                   │
     │               (Full-length hypospadias repair, e.g. 2 hrs)     │
     └─────────────────────────────┬───────────────────────────────────┘
                                   │
@@ -22,28 +22,93 @@
     └─────────────────────────────┬───────────────────────────────────┘
                                   │
           ════════════════════════════════════════════
-          ║          PHASE 1: OBJECT DETECTION       ║
+          ║       PHASE 1: OBJECT DETECTION          ║
+          ║           (ViT Multi-Label)              ║
           ════════════════════════════════════════════
                                   │
                                   ▼
     ┌─────────────────────────────────────────────────────────────────┐
-    │                     YOLOv8 (Fine-Tuned)                        │
+    │              Vision Transformer (ViT) Detector                 │
     │                                                                │
-    │   Detects per frame:                                           │
-    │   ┌─────────────────────┐  ┌──────────────────────┐            │
-    │   │    INSTRUMENTS      │  │   ANATOMY             │            │
-    │   │  • scissors         │  │  • urethral_plate     │            │
-    │   │  • forceps          │  │  • glans              │            │
-    │   │  • needle_driver    │  │  • skin_flap          │            │
-    │   │  • suture           │  │  • dartos_flap        │            │
-    │   │  • catheter         │  │                       │            │
-    │   └─────────────────────┘  └──────────────────────┘            │
+    │   Architecture (per frame):                                    │
     │                                                                │
-    │   Output: list[FrameDetections]  ─  bboxes + classes + conf    │
+    │   ┌─ Step 1: Patch Extraction (Eq 1) ────────────────────────┐ │
+    │   │                                                          │ │
+    │   │  Image A ∈ R^{224×224}                                   │ │
+    │   │       │                                                  │ │
+    │   │       ▼                                                  │ │
+    │   │  ┌────┬────┬────┬─···─┐                                  │ │
+    │   │  │ P₁ │ P₂ │ P₃ │    │  N = (224/16)² = 196 patches    │ │
+    │   │  ├────┼────┼────┤    │  Each Pₖ ∈ R^{16×16×3}           │ │
+    │   │  │ P₁₅│ P₁₆│ P₁₇│    │                                  │ │
+    │   │  ├────┼────┼────┤    │  Pₖ = A[i:i+a−1, j:j+b−1]       │ │
+    │   │  │    │    │    │    │  k = i × (m/b) + j                │ │
+    │   │  └────┴────┴────┴─···─┘                                  │ │
+    │   └──────────────────────────────────────────────────────────┘ │
+    │                          │                                     │
+    │                          ▼                                     │
+    │   ┌─ Step 2: Embedding + Positional Encoding (Eq 2) ────────┐ │
+    │   │                                                          │ │
+    │   │  Flatten: P̃ₖ ∈ R^{768}  (16 × 16 × 3 = 768)            │ │
+    │   │                                                          │ │
+    │   │  Linear projection + learnable positional embedding:     │ │
+    │   │  I = [[1, P̃₁], [2, P̃₂], ..., [196, P̃₁₉₆]]             │ │
+    │   │    ∈ R^{1 × 196 × 768}                                  │ │
+    │   └──────────────────────────────────────────────────────────┘ │
+    │                          │                                     │
+    │                          ▼                                     │
+    │   ┌─ Step 3: Transformer Encoder ────────────────────────────┐ │
+    │   │                                                          │ │
+    │   │  12-layer Transformer Encoder                            │ │
+    │   │  ┌────────────────────────────────────┐                  │ │
+    │   │  │  Pre-Norm → Multi-Head Attention   │  × 12 layers    │ │
+    │   │  │  (12 heads, dim=768)               │                  │ │
+    │   │  │  Pre-Norm → MLP (3072, GELU)       │                  │ │
+    │   │  │  + Residual connections + Dropout   │                  │ │
+    │   │  └────────────────────────────────────┘                  │ │
+    │   │         │                                                │ │
+    │   │         ▼                                                │ │
+    │   │  Global Average Pooling over 196 tokens → R^{768}        │ │
+    │   └──────────────────────────────────────────────────────────┘ │
+    │                          │                                     │
+    │                          ▼                                     │
+    │   ┌─ Step 4: Classification + Thresholding (Eq 3-4) ────────┐ │
+    │   │                                                          │ │
+    │   │  MLP Head: 768 → 384 → GELU → 9 logits                  │ │
+    │   │                    │                                     │ │
+    │   │                    ▼                                     │ │
+    │   │  P = σ(logits)   ── sigmoid (multi-label, NOT softmax)   │ │
+    │   │                    │                                     │ │
+    │   │                    ▼                                     │ │
+    │   │  O = { objectᵢ | Pᵢ > 0.5 }    (threshold per class)    │ │
+    │   │                                                          │ │
+    │   │  9 classes detected independently:                       │ │
+    │   │  ┌─────────────────────┐  ┌──────────────────────┐       │ │
+    │   │  │    INSTRUMENTS      │  │   ANATOMY            │       │ │
+    │   │  │  • scissors         │  │  • urethral_plate    │       │ │
+    │   │  │  • forceps          │  │  • glans             │       │ │
+    │   │  │  • needle_driver    │  │  • skin_flap         │       │ │
+    │   │  │  • suture           │  │  • dartos_flap       │       │ │
+    │   │  │  • catheter         │  │                      │       │ │
+    │   │  └─────────────────────┘  └──────────────────────┘       │ │
+    │   └──────────────────────────────────────────────────────────┘ │
+    │                                                                │
+    │   ┌─ Training: Weighted BCE Loss (Eq 5) ─────────────────────┐ │
+    │   │                                                          │ │
+    │   │  L = −Σ wᵢ [yᵢ log σ(ŷᵢ) + (1−yᵢ) log(1−σ(ŷᵢ))]      │ │
+    │   │                                                          │ │
+    │   │  wᵢ = 1/fᵢ  (inverse class frequency)                   │ │
+    │   │                                                          │ │
+    │   │  Handles imbalance: forceps (common) vs dartos (rare)    │ │
+    │   └──────────────────────────────────────────────────────────┘ │
+    │                                                                │
+    │   Fallback: YOLOv8 (set model: "yolov8" in config)            │
+    │                                                                │
+    │   Output: list[FrameDetections]  ─  classes + confidence       │
     └─────────────────────────────┬───────────────────────────────────┘
                                   │
           ════════════════════════════════════════════
-          ║     PHASE 1.5: SURGICAL PHASE RECOGNITION ║
+          ║   PHASE 1.5: SURGICAL PHASE RECOGNITION  ║
           ════════════════════════════════════════════
                                   │
                                   ▼
@@ -83,11 +148,13 @@
                    │
           ════════════════════════════════════════════
           ║    PHASE 2: FRAME-LEVEL CAPTIONING       ║
+          ║          (Claude Vision API)             ║
           ════════════════════════════════════════════
                    │
                    ▼
     ┌─────────────────────────────────────────────────────────────────┐
     │                   Claude Vision API                            │
+    │                   (Anthropic SDK)                               │
     │                                                                │
     │   Per frame, sends to Claude:                                  │
     │   ┌───────────────┐  ┌─────────────────────────────────┐       │
@@ -95,8 +162,16 @@
     │   │  (base64 JPG) │ +│   showing needle_driver, suture,│       │
     │   │               │  │   urethral_plate"               │       │
     │   └───────────────┘  └─────────────────────────────────┘       │
-    │                            │                                   │
-    │                            ▼                                   │
+    │           │                                                    │
+    │           ▼                                                    │
+    │   anthropic.Anthropic().messages.create(                       │
+    │     model = "claude-sonnet-4-20250514",                        │
+    │     system = "surgical video analysis assistant",              │
+    │     messages = [{ image + prompt }],                           │
+    │     max_tokens = 80                                            │
+    │   )                                                            │
+    │           │                                                    │
+    │           ▼                                                    │
     │   "Needle driver placing interrupted suture through            │
     │    urethral plate edges over catheter stent"                   │
     │                                                                │
@@ -126,11 +201,13 @@
                                   │
           ════════════════════════════════════════════
           ║    PHASE 3: CLIP-LEVEL CAPTIONING        ║
+          ║        (Claude Messages API)             ║
           ════════════════════════════════════════════
                                   │
                                   ▼
     ┌─────────────────────────────────────────────────────────────────┐
     │                    Claude Messages API                         │
+    │                    (Anthropic SDK)                              │
     │                                                                │
     │   Per clip, three operations:                                  │
     │                                                                │
@@ -140,11 +217,19 @@
     │   └──────────────────────────────────────────────────────────┘ │
     │                                                                │
     │   ┌─ 2. Caption Synthesis ───────────────────────────────────┐ │
-    │   │  System: "Summarize into one coherent surgical action"   │ │
-    │   │  User:   "Surgical phase: Tubularization                 │ │
-    │   │           - [42.0s] Needle driver grasping suture...     │ │
-    │   │           - [43.0s] Suture being pulled through...       │ │
-    │   │           - [44.0s] ..."                                 │ │
+    │   │                                                          │ │
+    │   │  anthropic.Anthropic().messages.create(                   │ │
+    │   │    model = "claude-sonnet-4-20250514",                    │ │
+    │   │    system = "Summarize into one coherent surgical action",│ │
+    │   │    messages = [{                                          │ │
+    │   │      "Surgical phase: Tubularization                     │ │
+    │   │       - [42.0s] Needle driver grasping suture...         │ │
+    │   │       - [43.0s] Suture being pulled through...           │ │
+    │   │       - [44.0s] ..."                                     │ │
+    │   │    }],                                                   │ │
+    │   │    max_tokens = 150                                      │ │
+    │   │  )                                                       │ │
+    │   │                                                          │ │
     │   │  → "Surgeon tubularizes urethral plate with running      │ │
     │   │     subepithelial suture over 8Fr catheter stent"        │ │
     │   └──────────────────────────────────────────────────────────┘ │
@@ -197,8 +282,8 @@
     │  └────────────┘  │ │              │ │                      │
     │                  │ │              │ │                      │
     │  Filter:         │ │              │ │                      │
-    │  score ≥ 0.6     │ │              │ │                      │
-    │  total ≤ 120s    │ │              │ │                      │
+    │  score >= 0.6    │ │              │ │                      │
+    │  total <= 120s   │ │              │ │                      │
     └──────────────────┘ └──────┬───────┘ └──────────┬───────────┘
                                 │                    │
                                 ▼                    ▼
@@ -230,6 +315,25 @@
     └─────────────────────────────────────────────────────────────────┘
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
+║                         MODEL SUMMARY                                      ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                            ║
+║  Phase 1   │ ViT (16×16 patches, 12-layer, 768-dim)  │ Object detection   ║
+║            │ Weighted BCE loss (Eq 5: wᵢ = 1/fᵢ)     │ Multi-label        ║
+║  ──────────┼──────────────────────────────────────────┼──────────────────  ║
+║  Phase 1.5 │ ResNet-18 + Bidirectional GRU            │ Phase recognition  ║
+║            │ Temporal smoothing + monotonic prior      │ 8 surgical phases  ║
+║  ──────────┼──────────────────────────────────────────┼──────────────────  ║
+║  Phase 2   │ Claude Vision API (Anthropic)            │ Frame captions     ║
+║            │ Image + detected objects → description   │ Medical accuracy   ║
+║  ──────────┼──────────────────────────────────────────┼──────────────────  ║
+║  Phase 3   │ Claude Messages API (Anthropic)          │ Clip captions      ║
+║            │ Frame captions + phase → coherent action │ + importance score ║
+║  ──────────┼──────────────────────────────────────────┼──────────────────  ║
+║  Phase 4   │ Scoring heuristic + video assembly       │ Highlight reel     ║
+║            │ Phase-balanced / importance / uniform     │ + surgical report  ║
+║                                                                            ║
+╠══════════════════════════════════════════════════════════════════════════════╣
 ║  CLI:  python cli.py --input surgery.mp4 --config config/default.yaml      ║
 ║  Env:  ANTHROPIC_API_KEY required for Phases 2 & 3                         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
