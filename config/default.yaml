@@ -3,7 +3,7 @@ pipeline:
   device: "cuda"  # or "cpu"
 
 video:
-  sample_fps: 1.0          # frames per second to sample
+  sample_fps: 0.1          # 1 frame every 10 seconds
   clip_duration_sec: 10    # sliding window for clip grouping
   clip_stride_sec: 5       # stride between clip windows
 
